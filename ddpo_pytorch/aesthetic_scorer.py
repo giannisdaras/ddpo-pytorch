@@ -35,8 +35,10 @@ class AestheticScorer(torch.nn.Module):
         self.clip = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
         self.mlp = MLP()
+        load_device = "cuda" if torch.cuda.is_available() else "cpu"
         state_dict = torch.load(
-            ASSETS_PATH.joinpath("sac+logos+ava1-l14-linearMSE.pth")
+            ASSETS_PATH.joinpath("sac+logos+ava1-l14-linearMSE.pth"),
+            map_location=load_device,
         )
         self.mlp.load_state_dict(state_dict)
         self.dtype = dtype
@@ -48,6 +50,15 @@ class AestheticScorer(torch.nn.Module):
         inputs = self.processor(images=images, return_tensors="pt")
         inputs = {k: v.to(self.dtype).to(device) for k, v in inputs.items()}
         embed = self.clip.get_image_features(**inputs)
+        if not isinstance(embed, torch.Tensor):
+            if hasattr(embed, "image_embeds"):
+                embed = embed.image_embeds
+            elif hasattr(embed, "pooler_output"):
+                embed = embed.pooler_output
+            elif isinstance(embed, (tuple, list)) and len(embed) > 0:
+                embed = embed[0]
+            else:
+                raise TypeError(f"Unexpected CLIP image feature output type: {type(embed)!r}")
         # normalize embedding
         embed = embed / torch.linalg.vector_norm(embed, dim=-1, keepdim=True)
         return self.mlp(embed).squeeze(1)
