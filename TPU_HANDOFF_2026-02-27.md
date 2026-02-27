@@ -20,6 +20,7 @@ This note captures TPU debugging + run state for DDPO compressibility parity run
   - `--config.mixed_precision=no`
   - parity overrides: `sample.batch_size=4`, `sample.num_batches_per_epoch=8`, `train.batch_size=2`, `train.gradient_accumulation_steps=4`, `num_epochs=100`, `save_freq=1`
 - Last observed status (2026-02-27 19:41 UTC): still in `[epoch 0] sampling start`.
+- Updated status (2026-02-27 19:43 UTC): passed reward + gather and entered `[epoch 0] training start`.
 
 ## DDPO Parity Constraints (kept)
 These were preserved intentionally (no effective parameter drift):
@@ -55,7 +56,11 @@ These were preserved intentionally (no effective parameter drift):
   - First training step still very slow.
 - `fix11h` (`tpu_compressibility_parity_fix11h_20260227_193254`):
   - Running now with timestep-shuffle disabled by default.
-  - At last check still in epoch 0 sampling.
+  - Confirmed progression through:
+    - `[epoch 0] reward eval start`
+    - `[epoch 0] pre-gather`
+    - `[epoch 0] rewards gathered`
+    - `[epoch 0] training start`
 
 ## Code Changes Made (local repo)
 - `scripts/train_tpu.py`
