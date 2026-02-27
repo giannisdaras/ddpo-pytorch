@@ -46,6 +46,45 @@ def aesthetic_score():
     return _fn
 
 
+def colorfulness():
+    """Hasler-Susstrunk colorfulness metric."""
+
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        x = images.astype(np.float32)
+        rg = np.abs(x[..., 0] - x[..., 1])
+        yb = np.abs(0.5 * (x[..., 0] + x[..., 1]) - x[..., 2])
+        std_rg = rg.std(axis=(1, 2))
+        std_yb = yb.std(axis=(1, 2))
+        mean_rg = rg.mean(axis=(1, 2))
+        mean_yb = yb.mean(axis=(1, 2))
+        scores = np.sqrt(std_rg**2 + std_yb**2) + 0.3 * np.sqrt(mean_rg**2 + mean_yb**2)
+        return scores.astype(np.float32), {}
+
+    return _fn
+
+
+def rms_contrast():
+    """RMS contrast in grayscale (std of luminance)."""
+
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        x = images.astype(np.float32)
+        gray = 0.299 * x[..., 0] + 0.587 * x[..., 1] + 0.114 * x[..., 2]
+        scores = gray.std(axis=(1, 2))
+        return scores.astype(np.float32), {}
+
+    return _fn
+
+
 def llava_strict_satisfaction():
     """Submits images to LLaVA and computes a reward by matching the responses to ground truth answers directly without
     using BERTScore. Prompt metadata must have "questions" and "answers" keys. See

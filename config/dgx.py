@@ -1,8 +1,20 @@
-import ml_collections
-import imp
+import importlib.util
 import os
 
-base = imp.load_source("base", os.path.join(os.path.dirname(__file__), "base.py"))
+import ml_collections
+
+
+def _load_base():
+    base_path = os.path.join(os.path.dirname(__file__), "base.py")
+    spec = importlib.util.spec_from_file_location("base_config", base_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load base config from {base_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+base = _load_base()
 
 
 def compressibility():

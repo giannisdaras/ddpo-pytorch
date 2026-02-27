@@ -21,6 +21,21 @@ This will immediately start finetuning Stable Diffusion v1.5 for compressibility
 
 Please note that the default hyperparameters in `config/base.py` are not meant to achieve good performance, they are just to get the code up and running as fast as possible. I would not expect to get good results without using a much larger number of samples per epoch and gradient accumulation steps.
 
+## TPU Usage (PyTorch/XLA)
+GPU training remains unchanged in `scripts/train.py`. For TPU runs, use the TPU-specific entrypoint:
+
+```bash
+scripts/launch_tpu.sh config/dgx.py:compressibility
+```
+
+Notes:
+- TPU script: `scripts/train_tpu.py`
+- Launcher: `scripts/launch_tpu.sh` (defaults to 4 local chips; override with `NPROC=...`)
+  - If your `torch_xla` build does not provide `torch_xla.distributed.xla_spawn`, the launcher falls back to direct execution and requires `NPROC=1`.
+- `config.train.use_8bit_adam` must be `False` on TPU
+- If `mixed_precision=fp16`, TPU path automatically uses `bf16`
+- With modern `diffusers` LoRA on TPU, install `peft` (`pip install peft`).
+
 ## Important Hyperparameters
 
 A detailed explanation of all the hyperparameters can be found in `config/base.py`. Here are a few of the important ones.
@@ -56,5 +71,3 @@ If you want to run the LLaVA prompt-image alignment experiments, you need to ded
 ## Training using 🤗 `trl`
 
 🤗 `trl` provides a [`DDPOTrainer` class](https://huggingface.co/docs/trl/ddpo_trainer) which lets you fine-tune Stable Diffusion on different reward functions using DDPO. The integration supports LoRA, too.  You can check out the [supplementary blog post](https://huggingface.co/blog/trl-ddpo) for additional guidance. The DDPO integration was contributed by @metric-space to `trl`. 
-
-
