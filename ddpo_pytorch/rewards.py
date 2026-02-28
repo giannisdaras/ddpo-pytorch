@@ -85,11 +85,12 @@ def rms_contrast():
     return _fn
 
 
-def niqe():
-    """NIQE (Natural Image Quality Evaluator) — no-reference quality metric.
-    Lower NIQE = more natural-looking. We negate so higher reward = better quality.
+def clip_iqa():
+    """CLIP-IQA — CLIP-based no-reference image quality metric.
+    Higher score = better perceptual quality. Uses piq.CLIPIQA.
     """
     import piq
+    scorer = piq.CLIPIQA()
 
     def _fn(images, prompts, metadata):
         del prompts, metadata
@@ -99,10 +100,9 @@ def niqe():
             imgs = torch.tensor(images.transpose(0, 3, 1, 2), dtype=torch.float32) / 255.0
             imgs = imgs.clamp(0, 1)
         imgs = imgs.cuda()
-        scores = piq.niqe(imgs, data_range=1.0)
-        # piq.niqe returns a scalar for the batch; compute per-image by iterating
-        per_image = torch.stack([piq.niqe(imgs[i:i+1], data_range=1.0) for i in range(len(imgs))])
-        return -per_image.detach().cpu().numpy().astype(np.float32), {}
+        scorer.to(imgs.device)
+        per_image = torch.stack([scorer(imgs[i:i+1]) for i in range(len(imgs))]).squeeze()
+        return per_image.detach().cpu().numpy().astype(np.float32), {}
 
     return _fn
 

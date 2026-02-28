@@ -70,10 +70,9 @@ def aesthetic():
     return config
 
 
-def niqe():
+def clip_iqa():
     config = compressibility()
-    config.reward_fn = "niqe"
-    # NIQE is a heavy per-image metric; slightly smaller train batch to be safe
+    config.reward_fn = "clip_iqa"
     config.train.batch_size = 4
     config.train.gradient_accumulation_steps = 4
     return config
