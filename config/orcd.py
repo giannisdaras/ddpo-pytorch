@@ -86,5 +86,25 @@ def brisque():
     return config
 
 
+def _to_2gpu(config):
+    """Rebalance a 4-GPU config for 2 GPUs while preserving effective scale.
+
+    Effective samples/epoch: 2 * 8 * 16 = 256  (unchanged)
+    Effective train batch:   2 * 4 * 8  = 64   (unchanged)
+    Gradient updates/epoch:  (8*16)/(4*8) = 4   (unchanged)
+    """
+    config.sample.num_batches_per_epoch *= 2   # 8 → 16
+    config.train.gradient_accumulation_steps *= 2  # 4 → 8
+    return config
+
+
+def clip_iqa_2gpu():
+    return _to_2gpu(clip_iqa())
+
+
+def brisque_2gpu():
+    return _to_2gpu(brisque())
+
+
 def get_config(name):
     return globals()[name]()

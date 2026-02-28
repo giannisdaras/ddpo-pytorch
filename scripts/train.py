@@ -78,11 +78,20 @@ def main(_):
         * num_train_timesteps,
     )
     if accelerator.is_main_process:
+        run_id_file = os.path.join(config.logdir, config.run_name, "wandb_run_id.txt")
+        wandb_kwargs = {"name": config.run_name}
+        if os.path.exists(run_id_file):
+            with open(run_id_file) as f:
+                wandb_kwargs.update({"resume": "must", "id": f.read().strip()})
         accelerator.init_trackers(
             project_name="ddpo-pytorch",
             config=config.to_dict(),
-            init_kwargs={"wandb": {"name": config.run_name}},
+            init_kwargs={"wandb": wandb_kwargs},
         )
+        if "id" not in wandb_kwargs:
+            os.makedirs(os.path.dirname(run_id_file), exist_ok=True)
+            with open(run_id_file, "w") as f:
+                f.write(accelerator.get_tracker("wandb", unwrap=True).id)
     logger.info(f"\n{config}")
 
     # set seed (device_specific is very important to get different prompts on different devices)
