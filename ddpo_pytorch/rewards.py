@@ -85,6 +85,48 @@ def rms_contrast():
     return _fn
 
 
+def niqe():
+    """NIQE (Natural Image Quality Evaluator) — no-reference quality metric.
+    Lower NIQE = more natural-looking. We negate so higher reward = better quality.
+    """
+    import piq
+
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            imgs = images.float().clamp(0, 1)
+        else:
+            imgs = torch.tensor(images.transpose(0, 3, 1, 2), dtype=torch.float32) / 255.0
+            imgs = imgs.clamp(0, 1)
+        imgs = imgs.cuda()
+        scores = piq.niqe(imgs, data_range=1.0)
+        # piq.niqe returns a scalar for the batch; compute per-image by iterating
+        per_image = torch.stack([piq.niqe(imgs[i:i+1], data_range=1.0) for i in range(len(imgs))])
+        return -per_image.detach().cpu().numpy().astype(np.float32), {}
+
+    return _fn
+
+
+def brisque():
+    """BRISQUE (Blind/Referenceless Image Spatial Quality Evaluator).
+    Lower BRISQUE = better quality. We negate so higher reward = better quality.
+    """
+    import piq
+
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            imgs = images.float().clamp(0, 1)
+        else:
+            imgs = torch.tensor(images.transpose(0, 3, 1, 2), dtype=torch.float32) / 255.0
+            imgs = imgs.clamp(0, 1)
+        imgs = imgs.cuda()
+        per_image = torch.stack([piq.brisque(imgs[i:i+1], data_range=1.0) for i in range(len(imgs))])
+        return -per_image.detach().cpu().numpy().astype(np.float32), {}
+
+    return _fn
+
+
 def llava_strict_satisfaction():
     """Submits images to LLaVA and computes a reward by matching the responses to ground truth answers directly without
     using BERTScore. Prompt metadata must have "questions" and "answers" keys. See

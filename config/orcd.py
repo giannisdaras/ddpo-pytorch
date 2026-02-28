@@ -70,5 +70,22 @@ def aesthetic():
     return config
 
 
+def niqe():
+    config = compressibility()
+    config.reward_fn = "niqe"
+    # NIQE is a heavy per-image metric; slightly smaller train batch to be safe
+    config.train.batch_size = 4
+    config.train.gradient_accumulation_steps = 4
+    return config
+
+
+def brisque():
+    config = compressibility()
+    config.reward_fn = "brisque"
+    config.train.batch_size = 4
+    config.train.gradient_accumulation_steps = 4
+    return config
+
+
 def get_config(name):
     return globals()[name]()
