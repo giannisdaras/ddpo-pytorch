@@ -37,6 +37,10 @@ try:
 except ImportError:
     xm = None
 try:
+    import torch_xla
+except ImportError:
+    torch_xla = None
+try:
     from peft import LoraConfig
 except ImportError:
     LoraConfig = None
@@ -327,9 +331,31 @@ def main(_):
     # that can trigger excessive XLA recompiles. Keep deterministic timestep order
     # on TPU unless explicitly re-enabled.
     tpu_shuffle_timesteps = os.environ.get("DDPO_TPU_SHUFFLE_TIMESTEPS", "0") == "1"
+    # Avoid forcing a full XLA step every training microstep; this can cause
+    # pathological compile/sync overhead on TPU. Sync periodically plus at
+    # optimizer boundaries.
+    tpu_train_sync_every = int(os.environ.get("DDPO_TPU_TRAIN_SYNC_EVERY", "10"))
+    # TPU fallback: bypass Accelerate gradient-sync boundaries (which can hang
+    # in single-process multi-chip PJRT mode) and step optimizer manually at
+    # sample-boundaries that match the configured effective batch size.
+    tpu_manual_accum = is_tpu and os.environ.get("DDPO_TPU_MANUAL_ACCUM", "1") == "1"
+    tpu_manual_accum_microsteps = (
+        config.train.gradient_accumulation_steps * num_train_timesteps
+    )
+    tpu_use_xm_optimizer_step = (
+        is_tpu and os.environ.get("DDPO_TPU_USE_XM_OPTIMIZER_STEP", "1") == "1"
+    )
 
     def tpu_to_cpu(tensor):
         return tensor.detach().cpu()
+
+    def tpu_sync(wait: bool):
+        if not is_tpu:
+            return
+        if torch_xla is not None and hasattr(torch_xla, "sync"):
+            torch_xla.sync(wait=wait)
+        elif xm is not None:
+            xm.mark_step()
 
     def prepare_reward_images(tensor_batch):
         if not is_tpu:
@@ -386,6 +412,7 @@ def main(_):
         first_epoch = 0
 
     global_step = 0
+    tpu_train_microstep = 0
     for epoch in range(first_epoch, config.num_epochs):
         if accelerator.is_local_main_process:
             logger.info(f"[epoch {epoch}] sampling start")
@@ -461,7 +488,7 @@ def main(_):
                     tpu_metadata_batches.append(prompt_metadata)
                     rewards = None
                     if is_tpu and xm is not None and tpu_sync_every_batch:
-                        xm.mark_step()
+                        tpu_sync(wait=False)
 
             samples.append(
                 {
@@ -549,7 +576,7 @@ def main(_):
             # Flush outstanding lazy XLA work before gather/host reads; otherwise
             # the first collective can block for a very long compile+materialize
             # phase after sampling.
-            xm.mark_step()
+            tpu_sync(wait=True)
 
         # gather rewards across processes
         if tpu_skip_gather:
@@ -643,7 +670,9 @@ def main(_):
 
             # train
             pipeline.unet.train()
+            optimizer.zero_grad()
             info = defaultdict(list)
+            did_step_in_inner_epoch = False
             for i, sample in tqdm(
                 list(enumerate(samples_batched)),
                 desc=f"Epoch {epoch}.{inner_epoch}: training",
@@ -665,7 +694,13 @@ def main(_):
                     leave=False,
                     disable=not accelerator.is_local_main_process,
                 ):
-                    with accelerator.accumulate(unet):
+                    should_step_manual = (
+                        tpu_manual_accum
+                        and (j == num_train_timesteps - 1)
+                        and ((i + 1) % config.train.gradient_accumulation_steps == 0)
+                    )
+
+                    if tpu_manual_accum:
                         with autocast():
                             if config.train.cfg:
                                 noise_pred = unet(
@@ -685,7 +720,6 @@ def main(_):
                                     sample["timesteps"][:, j],
                                     embeds,
                                 ).sample
-                            # compute the log prob of next_latents given latents under the current model
                             _, log_prob = ddim_step_with_logprob(
                                 pipeline.scheduler,
                                 noise_pred,
@@ -695,7 +729,6 @@ def main(_):
                                 prev_sample=sample["next_latents"][:, j],
                             )
 
-                        # ppo logic
                         advantages = torch.clamp(
                             sample["advantages"],
                             -config.train.adv_clip_max,
@@ -709,11 +742,6 @@ def main(_):
                             1.0 + config.train.clip_range,
                         )
                         loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-
-                        # debugging values
-                        # John Schulman says that (ratio - 1) - log(ratio) is a better
-                        # estimator, but most existing code uses this so...
-                        # http://joschu.net/blog/kl-approx.html
                         info["approx_kl"].append(
                             0.5
                             * torch.mean((log_prob - sample["log_probs"][:, j]) ** 2)
@@ -727,32 +755,146 @@ def main(_):
                         )
                         info["loss"].append(loss)
 
-                        # backward pass
-                        accelerator.backward(loss)
-                        if accelerator.sync_gradients:
-                            accelerator.clip_grad_norm_(
+                        (loss / tpu_manual_accum_microsteps).backward()
+                        tpu_train_microstep += 1
+                        should_sync = should_step_manual or (
+                            tpu_train_sync_every > 0
+                            and (tpu_train_microstep % tpu_train_sync_every == 0)
+                        )
+                        if should_sync:
+                            tpu_sync(wait=False)
+                        if should_step_manual:
+                            if accelerator.is_local_main_process and epoch == 0 and inner_epoch == 0:
+                                logger.info(
+                                    f"[epoch {epoch}] manual step boundary i={i} j={j} start"
+                                )
+                            torch.nn.utils.clip_grad_norm_(
                                 unet.parameters(), config.train.max_grad_norm
                             )
-                        optimizer.step()
-                        if is_tpu and xm is not None:
-                            xm.mark_step()
-                        optimizer.zero_grad()
+                            if tpu_use_xm_optimizer_step and xm is not None:
+                                xm.optimizer_step(optimizer, barrier=False)
+                            else:
+                                optimizer.step()
+                            tpu_sync(wait=False)
+                            optimizer.zero_grad()
+                            if accelerator.is_local_main_process and epoch == 0 and inner_epoch == 0:
+                                logger.info(
+                                    f"[epoch {epoch}] manual step boundary i={i} j={j} done"
+                                )
+                            did_step_in_inner_epoch = True
 
-                    # Checks if the accelerator has performed an optimization step behind the scenes
-                    if accelerator.sync_gradients:
-                        assert (j == num_train_timesteps - 1) and (
-                            i + 1
-                        ) % config.train.gradient_accumulation_steps == 0
-                        # log training-related stuff
-                        info = {k: torch.mean(torch.stack(v)) for k, v in info.items()}
-                        info = accelerator.reduce(info, reduction="mean")
-                        info.update({"epoch": epoch, "inner_epoch": inner_epoch})
-                        accelerator.log(info, step=global_step)
-                        global_step += 1
-                        info = defaultdict(list)
+                            # log training-related stuff at optimizer boundaries
+                            info = {
+                                k: torch.mean(torch.stack(v)).detach().cpu().item()
+                                for k, v in info.items()
+                            }
+                            info.update({"epoch": epoch, "inner_epoch": inner_epoch})
+                            accelerator.log(info, step=global_step)
+                            global_step += 1
+                            info = defaultdict(list)
+                    else:
+                        with accelerator.accumulate(unet):
+                            with autocast():
+                                if config.train.cfg:
+                                    noise_pred = unet(
+                                        torch.cat([sample["latents"][:, j]] * 2),
+                                        torch.cat([sample["timesteps"][:, j]] * 2),
+                                        embeds,
+                                    ).sample
+                                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                                    noise_pred = (
+                                        noise_pred_uncond
+                                        + config.sample.guidance_scale
+                                        * (noise_pred_text - noise_pred_uncond)
+                                    )
+                                else:
+                                    noise_pred = unet(
+                                        sample["latents"][:, j],
+                                        sample["timesteps"][:, j],
+                                        embeds,
+                                    ).sample
+                                # compute the log prob of next_latents given latents under the current model
+                                _, log_prob = ddim_step_with_logprob(
+                                    pipeline.scheduler,
+                                    noise_pred,
+                                    sample["timesteps"][:, j],
+                                    sample["latents"][:, j],
+                                    eta=config.sample.eta,
+                                    prev_sample=sample["next_latents"][:, j],
+                                )
+
+                            # ppo logic
+                            advantages = torch.clamp(
+                                sample["advantages"],
+                                -config.train.adv_clip_max,
+                                config.train.adv_clip_max,
+                            )
+                            ratio = torch.exp(log_prob - sample["log_probs"][:, j])
+                            unclipped_loss = -advantages * ratio
+                            clipped_loss = -advantages * torch.clamp(
+                                ratio,
+                                1.0 - config.train.clip_range,
+                                1.0 + config.train.clip_range,
+                            )
+                            loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+
+                            # debugging values
+                            # John Schulman says that (ratio - 1) - log(ratio) is a better
+                            # estimator, but most existing code uses this so...
+                            # http://joschu.net/blog/kl-approx.html
+                            info["approx_kl"].append(
+                                0.5
+                                * torch.mean((log_prob - sample["log_probs"][:, j]) ** 2)
+                            )
+                            info["clipfrac"].append(
+                                torch.mean(
+                                    (
+                                        torch.abs(ratio - 1.0) > config.train.clip_range
+                                    ).float()
+                                )
+                            )
+                            info["loss"].append(loss)
+
+                            # backward pass
+                            accelerator.backward(loss)
+                            if accelerator.sync_gradients:
+                                accelerator.clip_grad_norm_(
+                                    unet.parameters(), config.train.max_grad_norm
+                                )
+                            optimizer.step()
+                            if is_tpu and xm is not None:
+                                tpu_train_microstep += 1
+                                should_sync = accelerator.sync_gradients or (
+                                    tpu_train_sync_every > 0
+                                    and (tpu_train_microstep % tpu_train_sync_every == 0)
+                                )
+                                if should_sync:
+                                    tpu_sync(wait=accelerator.sync_gradients)
+                            optimizer.zero_grad()
+
+                        # Checks if the accelerator has performed an optimization step behind the scenes
+                        if accelerator.sync_gradients:
+                            assert (j == num_train_timesteps - 1) and (
+                                i + 1
+                            ) % config.train.gradient_accumulation_steps == 0
+                            did_step_in_inner_epoch = True
+                            # log training-related stuff
+                            if tpu_skip_gather:
+                                # Avoid TPU collectives in single-process fallback mode.
+                                info = {
+                                    k: torch.mean(torch.stack(v)).detach().cpu().item()
+                                    for k, v in info.items()
+                                }
+                            else:
+                                info = {k: torch.mean(torch.stack(v)) for k, v in info.items()}
+                                info = accelerator.reduce(info, reduction="mean")
+                            info.update({"epoch": epoch, "inner_epoch": inner_epoch})
+                            accelerator.log(info, step=global_step)
+                            global_step += 1
+                            info = defaultdict(list)
 
             # make sure we did an optimization step at the end of the inner epoch
-            assert accelerator.sync_gradients
+            assert did_step_in_inner_epoch
         if accelerator.is_local_main_process:
             logger.info(f"[epoch {epoch}] training done")
 
