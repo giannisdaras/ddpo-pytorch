@@ -124,5 +124,16 @@ def brisque_2gpu():
     return _to_2gpu(brisque())
 
 
+def pickscore():
+    """4x A100-SXM4-80GB (80GB each) — PickScore reward, ORCD effective scale.
+
+    PickScore uses ViT-H-14 (~3.94GB) which fits on A100 80GB alongside SD v1.4.
+    Using standard ORCD batch sizes.
+    """
+    config = compressibility()
+    config.reward_fn = "pickscore"
+    return config
+
+
 def get_config(name):
     return globals()[name]()

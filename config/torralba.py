@@ -53,9 +53,11 @@ def pickscore():
 def rule_of_thirds():
     """4x RTX 3090 (24GB each) — lightweight reward, full ORCD effective scale.
 
-    Effective samples/epoch: 4 * 8 * 8 = 256  (parity with ORCD)
-    Effective train batch:   4 * 4 * 4 = 64    (parity with ORCD)
-    No large auxiliary model — full batch sizes fit easily.
+    Effective samples/epoch: 4 * 2 * 32 = 256  (parity with ORCD)
+    Effective train batch:   4 * 1 * 16 = 64    (parity with ORCD)
+    Matched to rms_contrast config which successfully ran on 4x 3090 24GB.
+    train.batch_size=1 required to fit training backward pass on 24GB.
+    Assertions: 2*32=64 per device, 64%(1*16)=0 ✓; sample_batch(2)>=train_batch(1) ✓
     """
     config = base.get_config()
     config.pretrained.model = "CompVis/stable-diffusion-v1-4"
@@ -64,11 +66,11 @@ def rule_of_thirds():
     config.save_freq = 1
     config.num_checkpoint_limit = 100000000
 
-    config.sample.batch_size = 8
-    config.sample.num_batches_per_epoch = 8
+    config.sample.batch_size = 2
+    config.sample.num_batches_per_epoch = 32
 
-    config.train.batch_size = 4
-    config.train.gradient_accumulation_steps = 4
+    config.train.batch_size = 1
+    config.train.gradient_accumulation_steps = 16
 
     config.prompt_fn = "imagenet_animals"
     config.prompt_fn_kwargs = {}
