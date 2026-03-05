@@ -20,8 +20,9 @@ base = _load_base()
 def pickscore():
     """4x RTX 3090 (24GB each) — preserving ORCD 4-GPU effective scale.
 
-    Effective samples/epoch: 4 * 8 * 8 = 256  (parity with ORCD)
-    Effective train batch:   4 * 4 * 4  = 64   (parity with ORCD)
+    Effective samples/epoch: 4 * 4 * 16 = 256  (parity with ORCD)
+    Effective train batch:   4 * 4 * 4  = 64    (parity with ORCD)
+    batch_size reduced 8→4 to fit PickScore ViT-H-14 alongside SD v1.4 on 24GB.
     """
     config = base.get_config()
     config.pretrained.model = "CompVis/stable-diffusion-v1-4"
@@ -30,8 +31,8 @@ def pickscore():
     config.save_freq = 1
     config.num_checkpoint_limit = 100000000
 
-    config.sample.batch_size = 8
-    config.sample.num_batches_per_epoch = 8
+    config.sample.batch_size = 4
+    config.sample.num_batches_per_epoch = 16
 
     config.train.batch_size = 4
     config.train.gradient_accumulation_steps = 4
