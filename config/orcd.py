@@ -86,6 +86,12 @@ def brisque():
     return config
 
 
+def sharpness():
+    config = compressibility()
+    config.reward_fn = "sharpness"
+    return config
+
+
 def _to_2gpu(config):
     """Rebalance a 4-GPU config for 2 GPUs while preserving effective scale.
 

@@ -85,6 +85,32 @@ def rms_contrast():
     return _fn
 
 
+def sharpness():
+    """Laplacian variance sharpness metric.
+    Higher variance of the Laplacian = sharper image (more high-frequency detail).
+    """
+
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        x = images.astype(np.float32)
+        gray = 0.299 * x[..., 0] + 0.587 * x[..., 1] + 0.114 * x[..., 2]
+
+        # Laplacian kernel
+        kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
+        scores = []
+        for img in gray:
+            from scipy.ndimage import convolve
+            lap = convolve(img, kernel)
+            scores.append(lap.var())
+        return np.array(scores, dtype=np.float32), {}
+
+    return _fn
+
+
 def clip_iqa():
     """CLIP-IQA — CLIP-based no-reference image quality metric.
     Higher score = better perceptual quality. Uses piq.CLIPIQA.
