@@ -92,6 +92,18 @@ def sharpness():
     return config
 
 
+def saturation():
+    config = compressibility()
+    config.reward_fn = "saturation"
+    return config
+
+
+def entropy():
+    config = compressibility()
+    config.reward_fn = "entropy"
+    return config
+
+
 def _to_2gpu(config):
     """Rebalance a 4-GPU config for 2 GPUs while preserving effective scale.
 

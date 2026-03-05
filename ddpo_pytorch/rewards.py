@@ -85,6 +85,47 @@ def rms_contrast():
     return _fn
 
 
+def saturation():
+    """Mean HSV saturation. Higher = more vivid colors."""
+
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        scores = []
+        for img in images:
+            from PIL import Image as PILImage
+            hsv = np.array(PILImage.fromarray(img).convert("HSV"), dtype=np.float32)
+            scores.append(hsv[..., 1].mean() / 255.0)
+        return np.array(scores, dtype=np.float32), {}
+
+    return _fn
+
+
+def entropy():
+    """Pixel entropy of grayscale image. Higher = more complex/textured."""
+
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        scores = []
+        for img in images:
+            x = img.astype(np.float32)
+            gray = (0.299 * x[..., 0] + 0.587 * x[..., 1] + 0.114 * x[..., 2]).astype(np.uint8)
+            counts = np.bincount(gray.ravel(), minlength=256).astype(np.float32)
+            probs = counts / counts.sum()
+            probs = probs[probs > 0]
+            scores.append(-float(np.sum(probs * np.log2(probs))))
+        return np.array(scores, dtype=np.float32), {}
+
+    return _fn
+
+
 def sharpness():
     """Laplacian variance sharpness metric.
     Higher variance of the Laplacian = sharper image (more high-frequency detail).
