@@ -49,9 +49,11 @@ def _base_h100():
 def _base_a100():
     """LS6 gpu-a100: 1 node, 3x A100 40GB — approximate ORCD effective scale.
 
-    Effective samples/epoch: 3 * 8 * 11 = 264  (~3% above ORCD's 256)
-    Effective train batch:   3 * 4 * 6  = 72   (~12% above ORCD's 64)
-    Closest achievable with 3 GPUs.
+    Effective samples/epoch: 3 * 8 * 8 = 192  (75% of ORCD's 256)
+    Effective train batch:   3 * 4 * 4 = 48   (75% of ORCD's 64)
+    Note: 3 GPUs can't evenly divide 256 or 64; using ORCD-equivalent per-device
+    params (8 batches, grad_acc=4) so the train assertion passes.
+    Constraint: samples_per_device (64) % (train_batch * grad_acc) (16) == 0 ✓
     """
     config = base.get_config()
     config.pretrained.model = "CompVis/stable-diffusion-v1-4"
@@ -61,10 +63,10 @@ def _base_a100():
     config.num_checkpoint_limit = 100000000
 
     config.sample.batch_size = 8
-    config.sample.num_batches_per_epoch = 11
+    config.sample.num_batches_per_epoch = 8
 
     config.train.batch_size = 4
-    config.train.gradient_accumulation_steps = 6
+    config.train.gradient_accumulation_steps = 4
 
     config.prompt_fn = "imagenet_animals"
     config.prompt_fn_kwargs = {}
