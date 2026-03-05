@@ -17,7 +17,7 @@ def _load_base():
 base = _load_base()
 
 
-def clip_score():
+def _base_4gpu():
     """4x A40 (48GB each) — preserving ORCD 4-GPU effective scale.
 
     Effective samples/epoch: 4 * 8 * 8 = 256  (parity with ORCD)
@@ -39,12 +39,22 @@ def clip_score():
     config.prompt_fn = "imagenet_animals"
     config.prompt_fn_kwargs = {}
 
-    config.reward_fn = "clip_score"
-
     config.per_prompt_stat_tracking = {
         "buffer_size": 16,
         "min_count": 16,
     }
+    return config
+
+
+def edge_density():
+    config = _base_4gpu()
+    config.reward_fn = "edge_density"
+    return config
+
+
+def symmetry():
+    config = _base_4gpu()
+    config.reward_fn = "symmetry"
     return config
 
 

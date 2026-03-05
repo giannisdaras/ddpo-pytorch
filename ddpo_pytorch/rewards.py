@@ -194,6 +194,55 @@ def brisque():
     return _fn
 
 
+def edge_density():
+    """Canny edge density — fraction of pixels identified as edges.
+    Higher = more geometric structure/contours in the image.
+    """
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        from scipy.ndimage import sobel
+        scores = []
+        for img in images:
+            x = img.astype(np.float32)
+            gray = 0.299 * x[..., 0] + 0.587 * x[..., 1] + 0.114 * x[..., 2]
+            sx = sobel(gray, axis=0)
+            sy = sobel(gray, axis=1)
+            magnitude = np.hypot(sx, sy)
+            threshold = 0.1 * magnitude.max() if magnitude.max() > 0 else 1.0
+            scores.append((magnitude > threshold).mean())
+        return np.array(scores, dtype=np.float32), {}
+
+    return _fn
+
+
+def symmetry():
+    """Bilateral (left-right) symmetry of luminance.
+    Measured as 1 - mean absolute difference between image and its horizontal flip,
+    normalised by mean luminance. Higher = more symmetric.
+    """
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        scores = []
+        for img in images:
+            x = img.astype(np.float32)
+            gray = 0.299 * x[..., 0] + 0.587 * x[..., 1] + 0.114 * x[..., 2]
+            flipped = np.fliplr(gray)
+            mean_lum = gray.mean() + 1e-6
+            score = 1.0 - np.abs(gray - flipped).mean() / mean_lum
+            scores.append(float(score))
+        return np.array(scores, dtype=np.float32), {}
+
+    return _fn
+
+
 def clip_score():
     """CLIP text-image alignment score.
     Cosine similarity between image and prompt embeddings using CLIP-ViT-B/32.
