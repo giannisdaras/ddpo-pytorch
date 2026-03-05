@@ -33,7 +33,7 @@ $CONDA/huggingface-cli login --token $HF_TOKEN
 
 cd $REPO
 
-$CONDA/accelerate launch --num_processes 1 --mixed_precision fp16 \
+$CONDA/accelerate launch --num_processes 1 --mixed_precision bf16 \
     scripts/train.py \
     --config config/vista.py:$CONFIG \
     --config.run_name $RUN_NAME \
