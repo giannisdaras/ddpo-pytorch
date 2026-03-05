@@ -243,6 +243,44 @@ def symmetry():
     return _fn
 
 
+def pickscore():
+    """PickScore — CLIP ViT-H-14 fine-tuned on Pick-a-Pic human preference data.
+    Measures human aesthetic/alignment preference. Higher = more preferred by humans.
+    Model: yuvalkirstain/PickScore_v1
+    """
+    from transformers import AutoProcessor, AutoModel
+
+    processor = AutoProcessor.from_pretrained("laion/CLIP-ViT-H-14-laion2B-s32B-b79K")
+    model = AutoModel.from_pretrained("yuvalkirstain/PickScore_v1").cuda()
+    model.eval()
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            imgs_uint8 = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu()
+            pil_images = [Image.fromarray(img.permute(1, 2, 0).numpy()) for img in imgs_uint8]
+        else:
+            pil_images = [Image.fromarray(img) for img in images]
+
+        inputs = processor(
+            text=list(prompts), images=pil_images,
+            return_tensors="pt", padding=True, truncation=True, max_length=77
+        )
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            img_emb = model.get_image_features(pixel_values=inputs["pixel_values"])
+            txt_emb = model.get_text_features(
+                input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"]
+            )
+            img_emb = img_emb / img_emb.norm(dim=-1, keepdim=True)
+            txt_emb = txt_emb / txt_emb.norm(dim=-1, keepdim=True)
+            scores = (img_emb * txt_emb).sum(dim=-1)
+
+        return scores.cpu().numpy().astype(np.float32), {}
+
+    return _fn
+
+
 def clip_score():
     """CLIP text-image alignment score.
     Cosine similarity between image and prompt embeddings using CLIP-ViT-B/32.
