@@ -20,9 +20,10 @@ base = _load_base()
 def pickscore():
     """4x RTX 3090 (24GB each) — preserving ORCD 4-GPU effective scale.
 
-    Effective samples/epoch: 4 * 4 * 16 = 256  (parity with ORCD)
-    Effective train batch:   4 * 4 * 4  = 64    (parity with ORCD)
-    batch_size reduced 8→4 to fit PickScore ViT-H-14 alongside SD v1.4 on 24GB.
+    Effective samples/epoch: 4 * 2 * 32 = 256  (parity with ORCD)
+    Effective train batch:   4 * 2 * 8  = 64    (parity with ORCD)
+    sample.batch_size=2 (reduced from 8) to fit PickScore ViT-H-14 + SD v1.4 on 24GB.
+    train.batch_size must be <= sample.batch_size; grad_acc doubled to compensate.
     """
     config = base.get_config()
     config.pretrained.model = "CompVis/stable-diffusion-v1-4"
@@ -31,8 +32,40 @@ def pickscore():
     config.save_freq = 1
     config.num_checkpoint_limit = 100000000
 
-    config.sample.batch_size = 4
-    config.sample.num_batches_per_epoch = 16
+    config.sample.batch_size = 2
+    config.sample.num_batches_per_epoch = 32
+
+    config.train.batch_size = 2
+    config.train.gradient_accumulation_steps = 8
+
+    config.prompt_fn = "imagenet_animals"
+    config.prompt_fn_kwargs = {}
+
+    config.reward_fn = "pickscore"
+
+    config.per_prompt_stat_tracking = {
+        "buffer_size": 16,
+        "min_count": 16,
+    }
+    return config
+
+
+def rule_of_thirds():
+    """4x RTX 3090 (24GB each) — lightweight reward, full ORCD effective scale.
+
+    Effective samples/epoch: 4 * 8 * 8 = 256  (parity with ORCD)
+    Effective train batch:   4 * 4 * 4 = 64    (parity with ORCD)
+    No large auxiliary model — full batch sizes fit easily.
+    """
+    config = base.get_config()
+    config.pretrained.model = "CompVis/stable-diffusion-v1-4"
+    config.num_epochs = 100
+    config.use_lora = True
+    config.save_freq = 1
+    config.num_checkpoint_limit = 100000000
+
+    config.sample.batch_size = 8
+    config.sample.num_batches_per_epoch = 8
 
     config.train.batch_size = 4
     config.train.gradient_accumulation_steps = 4
@@ -40,7 +73,7 @@ def pickscore():
     config.prompt_fn = "imagenet_animals"
     config.prompt_fn_kwargs = {}
 
-    config.reward_fn = "pickscore"
+    config.reward_fn = "rule_of_thirds"
 
     config.per_prompt_stat_tracking = {
         "buffer_size": 16,

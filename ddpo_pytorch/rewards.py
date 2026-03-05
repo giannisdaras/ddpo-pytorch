@@ -313,6 +313,50 @@ def clip_score():
     return _fn
 
 
+def rule_of_thirds():
+    """Rule-of-thirds compositional score.
+    Measures how much edge energy is concentrated near the 1/3 and 2/3 gridlines
+    relative to the full image, using a Gaussian weight mask.
+    Higher = more salient content placed along the compositional thirds.
+    """
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        from scipy.ndimage import sobel
+        scores = []
+        for img in images:
+            x = img.astype(np.float32)
+            gray = 0.299 * x[..., 0] + 0.587 * x[..., 1] + 0.114 * x[..., 2]
+
+            # Edge magnitude
+            sx = sobel(gray, axis=0)
+            sy = sobel(gray, axis=1)
+            magnitude = np.hypot(sx, sy)
+
+            H, W = gray.shape
+            # Gaussian weight mask peaked at 1/3 and 2/3 lines (rows and cols)
+            sigma = min(H, W) * 0.05  # 5% of image size
+            ys = np.arange(H, dtype=np.float32)
+            xs = np.arange(W, dtype=np.float32)
+            yw = (np.exp(-((ys - H / 3) ** 2) / (2 * sigma ** 2)) +
+                  np.exp(-((ys - 2 * H / 3) ** 2) / (2 * sigma ** 2)))
+            xw = (np.exp(-((xs - W / 3) ** 2) / (2 * sigma ** 2)) +
+                  np.exp(-((xs - 2 * W / 3) ** 2) / (2 * sigma ** 2)))
+            weight = yw[:, None] + xw[None, :]  # additive grid mask
+            weight /= weight.sum()
+
+            weighted_energy = (magnitude * weight).sum()
+            mean_energy = magnitude.mean() + 1e-6
+            scores.append(float(weighted_energy / mean_energy))
+
+        return np.array(scores, dtype=np.float32), {}
+
+    return _fn
+
+
 def llava_strict_satisfaction():
     """Submits images to LLaVA and computes a reward by matching the responses to ground truth answers directly without
     using BERTScore. Prompt metadata must have "questions" and "answers" keys. See
