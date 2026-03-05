@@ -36,6 +36,8 @@ def _base_1gpu():
     config.train.batch_size = 4
     config.train.gradient_accumulation_steps = 16
 
+    config.mixed_precision = "bf16"  # GH200 doesn't support fp16 LayerNorm
+
     config.prompt_fn = "imagenet_animals"
     config.prompt_fn_kwargs = {}
 
