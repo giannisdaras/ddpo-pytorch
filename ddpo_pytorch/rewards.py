@@ -194,6 +194,38 @@ def brisque():
     return _fn
 
 
+def clip_score():
+    """CLIP text-image alignment score.
+    Cosine similarity between image and prompt embeddings using CLIP-ViT-B/32.
+    Higher = better prompt alignment.
+    """
+    from transformers import CLIPModel, CLIPProcessor
+
+    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").cuda()
+    model.eval()
+    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            imgs_uint8 = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu()
+            pil_images = [Image.fromarray(img.permute(1, 2, 0).numpy()) for img in imgs_uint8]
+        else:
+            pil_images = [Image.fromarray(img) for img in images]
+
+        inputs = processor(text=list(prompts), images=pil_images, return_tensors="pt", padding=True, truncation=True)
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = model(**inputs)
+            img_emb = outputs.image_embeds / outputs.image_embeds.norm(dim=-1, keepdim=True)
+            txt_emb = outputs.text_embeds / outputs.text_embeds.norm(dim=-1, keepdim=True)
+            scores = (img_emb * txt_emb).sum(dim=-1)
+
+        return scores.cpu().numpy().astype(np.float32), {}
+
+    return _fn
+
+
 def llava_strict_satisfaction():
     """Submits images to LLaVA and computes a reward by matching the responses to ground truth answers directly without
     using BERTScore. Prompt metadata must have "questions" and "answers" keys. See
